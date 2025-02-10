@@ -84,7 +84,7 @@ def fetch_market_data():
         print(f"Error fetching data: {e}")
 
 def fetch_news_sentiment():
-    url = "https://newsapi.org/v2/everything?q=bitcoin&apiKey=YOUR_API_KEY"
+    url = "https://newsapi.org/v2/everything?q=bitcoin&apiKey=9a947fd72c6049be99a160355c70adbc"
     try:
         response = requests.get(url).json()
         sentiment_scores = [
