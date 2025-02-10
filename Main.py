@@ -20,7 +20,7 @@ sia = SentimentIntensityAnalyzer()
 # Global variables
 scaler = MinMaxScaler(feature_range=(0, 1))
 model = Sequential([
-    LSTM(50, return_sequences=True, input_shape=(60, 53)),
+    LSTM(50, return_sequences=True, input_shape=(60, 10)),  # Updated input shape
     Dropout(0.2),
     LSTM(50, return_sequences=False),
     Dropout(0.2),
@@ -33,39 +33,41 @@ data = None
 predicted_price = 0
 trading = False
 
-INDICATORS = [
-    "sma", "ema", "macd", "adx", "stochastic",
-    "bollinger_bands_upper", "bollinger_bands_lower",
-]
+INDICATORS = ["sma", "ema", "macd", "stochastic", 
+             "bollinger_upper", "bollinger_lower"]
 
 def calculate_indicators(df):
+    # Price transformations
+    df['returns'] = df['close'].pct_change()
+    
     # Moving Averages
     df['sma'] = df['close'].rolling(window=14).mean()
     df['ema'] = df['close'].ewm(span=14, adjust=False).mean()
-    df['wma'] = talib.WMA(df['close'], timeperiod=14)
-
-    # MACD
-    macd, macdsignal, _ = talib.MACD(df['close'])
-    df['macd'] = macd - macdsignal
-
-    # Stochastic
-    df['stochastic'] = talib.STOCH(df['high'], df['low'], df['close'])[0]
-
-    # ADX
-    df['adx'] = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
-
+    
+    # MACD (using EMAs)
+    ema12 = df['close'].ewm(span=12, adjust=False).mean()
+    ema26 = df['close'].ewm(span=26, adjust=False).mean()
+    df['macd'] = ema12 - ema26
+    
+    # Stochastic Oscillator
+    low14 = df['low'].rolling(window=14).min()
+    high14 = df['high'].rolling(window=14).max()
+    df['stochastic'] = 100 * ((df['close'] - low14) / (high14 - low14))
+    
     # Bollinger Bands
-    upper_band, _, lower_band = talib.BBANDS(df['close'], timeperiod=20)
-    df['bollinger_bands_upper'] = upper_band
-    df['bollinger_bands_lower'] = lower_band
-
-    return df  # Fixed typo from dfM to df
+    sma20 = df['close'].rolling(window=20).mean()
+    std20 = df['close'].rolling(window=20).std()
+    df['bollinger_upper'] = sma20 + (2 * std20)
+    df['bollinger_lower'] = sma20 - (2 * std20)
+    
+    # Drop NaN values from indicators
+    return df.dropna()
 
 def identify_sbs(df):
     df['high_low_diff'] = df['high'] - df['low']
     df['close_open_diff'] = df['close'] - df['open']
     df['sbs_signal'] = ((df['high_low_diff'] > df['close_open_diff']) & 
-                        (df['close_open_diff'] > 0)).astype(int)
+                       (df['close_open_diff'] > 0)).astype(int)
     return df
 
 def fetch_market_data():
@@ -78,9 +80,9 @@ def fetch_market_data():
         df['close'] = scaler.fit_transform(df['close'].values.reshape(-1, 1))
         df = calculate_indicators(df)
         df = identify_sbs(df)
-        data = df.dropna()
+        data = df
     except Exception as e:
-        print(f"Error fetching data: {e}")
+        print(f"Data fetch error: {e}")
 
 def fetch_news_sentiment():
     url = "https://newsapi.org/v2/everything?q=bitcoin&apiKey=9a947fd72c6049be99a160355c70adbc"
@@ -92,7 +94,7 @@ def fetch_news_sentiment():
         ]
         return np.mean(sentiment_scores) if sentiment_scores else 0
     except Exception as e:
-        print(f"Error fetching sentiment: {e}")
+        print(f"Sentiment error: {e}")
         return 0
 
 def calculate_hmm_states():
@@ -153,24 +155,27 @@ def trading_bot():
                 predicted_price = model.predict(latest_features, verbose=0)[0, 0]
                 
         except Exception as e:
-            print(f"Trading bot error: {e}")
+            print(f"Trading error: {e}")
         time.sleep(60)
 
 def main():
     global trading
-    st.title("Advanced AI-Driven Trading Bot with Yahoo Finance")
+    st.title("AI Trading Bot with Yahoo Finance")
     
-    if st.button("Start Trading") and not trading:
-        trading = True
-        threading.Thread(target=trading_bot, daemon=True).start()
-        st.success("Trading started!")
-        
-    if st.button("Stop Trading"):
-        trading = False
-        st.warning("Trading stopped.")
-        
-    st.header("Predicted Price")
-    st.write(predicted_price)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Start Trading") and not trading:
+            trading = True
+            threading.Thread(target=trading_bot, daemon=True).start()
+            st.success("Trading started!")
+    
+    with col2:
+        if st.button("Stop Trading"):
+            trading = False
+            st.warning("Trading stopped.")
+    
+    st.subheader("Real-time Prediction")
+    st.metric("Predicted Price", f"{predicted_price:.4f}")
 
 if __name__ == "__main__":
     main()
