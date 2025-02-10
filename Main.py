@@ -10,7 +10,6 @@ import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from hmmlearn.hmm import GaussianHMM
 import yfinance as yf
-import talib
 import time
 import threading
 
