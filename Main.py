@@ -13,14 +13,19 @@ import yfinance as yf
 import time
 import threading
 
+# Suppress TensorFlow warnings
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+tf.get_logger().setLevel('ERROR')
+
 # Initialize Sentiment Analyzer
-nltk.download('vader_lexicon')
+nltk.download('vader_lexicon', quiet=True)
 sia = SentimentIntensityAnalyzer()
 
 # Global variables
 scaler = MinMaxScaler(feature_range=(0, 1))
 model = Sequential([
-    LSTM(50, return_sequences=True, input_shape=(60, 10)),  # Updated input shape
+    LSTM(50, return_sequences=True, input_shape=(60, 10)),  # 60 time steps, 10 features
     Dropout(0.2),
     LSTM(50, return_sequences=False),
     Dropout(0.2),
@@ -33,12 +38,14 @@ data = None
 predicted_price = 0
 trading = False
 
+# Indicators including volatility
 INDICATORS = ["sma", "ema", "macd", "stochastic", 
-             "bollinger_upper", "bollinger_lower"]
+              "bollinger_upper", "bollinger_lower", "volatility"]
 
 def calculate_indicators(df):
     # Price transformations
     df['returns'] = df['close'].pct_change()
+    df['volatility'] = df['returns'].rolling(window=14).std()  # New feature: volatility
     
     # Moving Averages
     df['sma'] = df['close'].rolling(window=14).mean()
@@ -77,7 +84,7 @@ def fetch_market_data():
         df = ticker.history(period="7d", interval="1m")
         df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
         df.columns = ['open', 'high', 'low', 'close', 'volume']
-        df['close'] = scaler.fit_transform(df['close'].values.reshape(-1, 1))
+        df['close'] = scaler.fit_transform(df['close'].values.reshape(-1, 1))  # Scale close prices
         df = calculate_indicators(df)
         df = identify_sbs(df)
         data = df
@@ -124,13 +131,18 @@ def prepare_training_data():
                 indicators_data[i-60:i]
             ))
             features.append(feature_vector)
-        return np.array(features), close_data[60:]
+        
+        features_array = np.array(features)
+        print(f"Final features shape: {features_array.shape}")  # Debugging line
+        return features_array, close_data[60:]
     return None, None
 
 def train_model():
     features, target = prepare_training_data()
     if features is not None and target is not None:
-        model.fit(features, target, batch_size=1, epochs=1, verbose=0)
+        print("Training model...")
+        history = model.fit(features, target, batch_size=1, epochs=5, verbose=1)  # Train for 5 epochs
+        print(f"Training loss: {history.history['loss'][-1]:.4f}")
 
 def trading_bot():
     global trading, predicted_price
@@ -140,7 +152,7 @@ def trading_bot():
             train_model()
             
             if data is not None and len(data) >= 60:
-                latest_data = data['close'].values[-60:]
+                latest_data = scaler.transform(data['close'].values[-60:].reshape(-1, 1))  # Scale latest data
                 sentiment = fetch_news_sentiment()
                 hmm_states = calculate_hmm_states()[-60:]
                 indicators_data = data[INDICATORS].values[-60:]
@@ -152,7 +164,9 @@ def trading_bot():
                     indicators_data
                 )).reshape(1, 60, -1)
                 
+                print(f"Latest features shape: {latest_features.shape}")  # Debugging line
                 predicted_price = model.predict(latest_features, verbose=0)[0, 0]
+                print(f"Predicted price: {predicted_price}")  # Debugging line
                 
         except Exception as e:
             print(f"Trading error: {e}")
