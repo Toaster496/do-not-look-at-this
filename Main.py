@@ -195,31 +195,18 @@ def calculate_probability():
     final_probability = np.mean([macd_prob, volatility_prob, sentiment_prob, hmm_prob])
     return round(final_probability, 2)
 
-def send_discord_alert(predicted_price, last_price, probability):
-    """Sends AI prediction updates to Discord via Webhook."""
-    price_change = ((predicted_price - last_price) / last_price) * 100  # % Change
-    direction = "📈 **UP**" if price_change > 0 else "📉 **DOWN**"
+def estimate_time_to_target(predicted_price, last_price):
+    """Estimate how long it will take for BTC to reach predicted price based on past movement speed."""
+    global data
+    if data is not None and len(data) > 60:
+        recent_prices = data['close'].values[-60:]  # Last 60 minutes
+        price_diffs = np.diff(recent_prices)  # Minute-to-minute changes
+        avg_speed = np.mean(abs(price_diffs))  # Average absolute price change per minute
 
-    message = {
-        "username": "AI Trading Bot",
-        "avatar_url": "https://i.imgur.com/YX4xN6Z.png",  # Custom bot avatar
-        "embeds": [
-            {
-                "title": "Bitcoin Price Prediction",
-                "description": f"AI Model Prediction: {direction}\n\n"
-                               f"💰 **Predicted Price**: ${predicted_price:.2f}\n"
-                               f"📊 **Price Change**: {price_change:.2f}%\n"
-                               f"🎯 **Probability**: {probability:.2f}%",
-                "color": 3066993 if price_change > 0 else 15158332  # Green for UP, Red for DOWN
-            }
-        ]
-    }
-    
-    response = requests.post(DISCORD_WEBHOOK_URL, json=message)
-    if response.status_code == 204:
-        print("✅ Discord alert sent!")
-    else:
-        print(f"❌ Failed to send Discord alert: {response.status_code}, {response.text}")
+        if avg_speed > 0:
+            estimated_time = abs(predicted_price - last_price) / avg_speed  # Estimated minutes
+            return round(estimated_time, 2)  # Return estimated time in minutes
+    return None
 
 def trading_bot():
     global trading, predicted_price
@@ -245,21 +232,48 @@ def trading_bot():
                 raw_prediction = model.predict(latest_features, verbose=0)[0, 0]
                 predicted_price = scaler.inverse_transform([[raw_prediction]])[0, 0]
 
-                # **Compute final probability using all confidence factors**
                 probability = calculate_probability()
 
-                print(f"Predicted BTC Price: ${predicted_price:.2f} | Probability: {probability:.2f}%")
-
-                # **Send alert to Discord**
                 if last_price:
-                    send_discord_alert(predicted_price, last_price, probability)
+                    estimated_time = estimate_time_to_target(predicted_price, last_price)
+                    send_discord_alert(predicted_price, last_price, probability, estimated_time)
 
-                last_price = predicted_price  # Update last price
+                last_price = predicted_price
 
         except Exception as e:
             print(f"Trading error: {e}")
 
         time.sleep(60)  # Run every minute
+
+def send_discord_alert(predicted_price, last_price, probability, estimated_time):
+    """Sends AI prediction updates to Discord via Webhook."""
+    price_change = ((predicted_price - last_price) / last_price) * 100  
+    direction = "📈 **UP**" if price_change > 0 else "📉 **DOWN**"
+
+    time_text = f"⏳ **Expected in**: `{estimated_time:.2f} min`" if estimated_time else "⏳ **Time estimate unavailable**"
+
+    message = {
+        "username": "AI Trading Bot",
+        "avatar_url": "https://i.imgur.com/YX4xN6Z.png",
+        "embeds": [
+            {
+                "title": "Bitcoin Price Prediction",
+                "description": f"AI Model Prediction: {direction}\n\n"
+                               f"💰 **Predicted Price**: ${predicted_price:.2f}\n"
+                               f"📊 **Price Change**: {price_change:.2f}%\n"
+                               f"🎯 **Probability**: {probability:.2f}%\n"
+                               f"{time_text}",
+                "color": 3066993 if price_change > 0 else 15158332  
+            }
+        ]
+    }
+    
+    response = requests.post(DISCORD_WEBHOOK_URL, json=message)
+    if response.status_code == 204:
+        print("✅ Discord alert sent!")
+    else:
+        print(f"❌ Failed to send Discord alert: {response.status_code}, {response.text}")
+
 
 
 if __name__ == "__main__":
