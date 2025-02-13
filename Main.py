@@ -1,4 +1,3 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
 import tensorflow as tf
@@ -12,9 +11,34 @@ from hmmlearn.hmm import GaussianHMM
 import yfinance as yf
 import time
 import threading
-
-# Suppress TensorFlow warnings
+from google.colab import drive
 import os
+
+# Mount Google Drive
+drive.mount('/content/drive')
+
+# Define where to save the model
+MODEL_SAVE_PATH = "/content/drive/MyDrive/best_model.h5"
+best_loss = float('inf')  # Start with a high loss
+
+def train_model():
+    global best_loss
+    
+    features, target = prepare_training_data()
+    if features is not None and target is not None:
+        print("Training model...")
+        history = model.fit(features, target, batch_size=1, epochs=5, verbose=1)
+        
+        current_loss = history.history['loss'][-1]  # Get latest training loss
+        print(f"Training loss: {current_loss:.4f}")
+
+        # Save model only if it has a lower loss
+        if current_loss < best_loss:
+            best_loss = current_loss
+            model.save(MODEL_SAVE_PATH)
+            print(f"New best model saved with loss: {best_loss:.4f}")
+
+#go a way
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.get_logger().setLevel('ERROR')
 
@@ -137,59 +161,111 @@ def prepare_training_data():
         return features_array, close_data[60:]
     return None, None
 
-def train_model():
-    features, target = prepare_training_data()
-    if features is not None and target is not None:
-        print("Training model...")
-        history = model.fit(features, target, batch_size=1, epochs=5, verbose=1)  # Train for 5 epochs
-        print(f"Training loss: {history.history['loss'][-1]:.4f}")
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1339511103482236959/r0cJaoMtY9mZiOCeLu6Rj6NUN9rHMydW0QtDG_N4qDolkNiyYpUkh4aCPONH9rm2YbmY"
+
+def calculate_probability():
+    """Calculates probability based on MACD, volatility, sentiment, and HMM states."""
+    global data
+
+    if data is None or len(data) < 60:
+        return 50  # Default 50% if not enough data
+
+    # 1️⃣ **MACD Strength**
+    macd_strength = abs(data['macd'].iloc[-1])  
+    macd_prob = min(100, macd_strength * 10)  # Normalize to 0-100%
+
+    # 2️⃣ **Volatility Confidence** (Lower volatility = Higher confidence)
+    volatility = data['volatility'].iloc[-1]
+    volatility_prob = max(0, 100 - (volatility * 200))  # Normalize inversely
+
+    # 3️⃣ **Sentiment Score**  
+    sentiment = fetch_news_sentiment()
+    sentiment_prob = ((sentiment + 1) / 2) * 100  # Convert -1 to 1 range into 0-100%
+
+    # 4️⃣ **HMM Market State** (Higher confidence if trending)
+    hmm_states = calculate_hmm_states()
+    recent_state = hmm_states[-1] if len(hmm_states) > 0 else 0
+    hmm_prob = (recent_state / 2) * 100  # Convert 0-2 HMM states to 0-100%
+
+    # 🎯 **Final Probability Calculation** (Equal Weighting)
+    final_probability = np.mean([macd_prob, volatility_prob, sentiment_prob, hmm_prob])
+    return round(final_probability, 2)
+
+def send_discord_alert(predicted_price, last_price, probability):
+    """Sends AI prediction updates to Discord via Webhook."""
+    price_change = ((predicted_price - last_price) / last_price) * 100  # % Change
+    direction = "📈 **UP**" if price_change > 0 else "📉 **DOWN**"
+
+    message = {
+        "username": "AI Trading Bot",
+        "avatar_url": "https://i.imgur.com/YX4xN6Z.png",  # Custom bot avatar
+        "embeds": [
+            {
+                "title": "Bitcoin Price Prediction",
+                "description": f"AI Model Prediction: {direction}\n\n"
+                               f"💰 **Predicted Price**: ${predicted_price:.2f}\n"
+                               f"📊 **Price Change**: {price_change:.2f}%\n"
+                               f"🎯 **Probability**: {probability:.2f}%",
+                "color": 3066993 if price_change > 0 else 15158332  # Green for UP, Red for DOWN
+            }
+        ]
+    }
+    
+    response = requests.post(DISCORD_WEBHOOK_URL, json=message)
+    if response.status_code == 204:
+        print("✅ Discord alert sent!")
+    else:
+        print(f"❌ Failed to send Discord alert: {response.status_code}, {response.text}")
 
 def trading_bot():
     global trading, predicted_price
+    last_price = None
+
     while trading:
         try:
             fetch_market_data()
             train_model()
             
             if data is not None and len(data) >= 60:
-                latest_data = scaler.transform(data['close'].values[-60:].reshape(-1, 1))  # Scale latest data
+                latest_close = data['close'].values[-60:].reshape(-1, 1)
+                latest_scaled = scaler.transform(latest_close)
+
                 sentiment = fetch_news_sentiment()
                 hmm_states = calculate_hmm_states()[-60:]
                 indicators_data = data[INDICATORS].values[-60:]
-                
+
                 latest_features = np.column_stack((
-                    latest_data,
-                    [sentiment] * 60,
-                    hmm_states,
-                    indicators_data
+                    latest_scaled, [sentiment] * 60, hmm_states, indicators_data
                 )).reshape(1, 60, -1)
-                
-                print(f"Latest features shape: {latest_features.shape}")  # Debugging line
-                predicted_price = model.predict(latest_features, verbose=0)[0, 0]
-                print(f"Predicted price: {predicted_price}")  # Debugging line
-                
+
+                raw_prediction = model.predict(latest_features, verbose=0)[0, 0]
+                predicted_price = scaler.inverse_transform([[raw_prediction]])[0, 0]
+
+                # **Compute final probability using all confidence factors**
+                probability = calculate_probability()
+
+                print(f"Predicted BTC Price: ${predicted_price:.2f} | Probability: {probability:.2f}%")
+
+                # **Send alert to Discord**
+                if last_price:
+                    send_discord_alert(predicted_price, last_price, probability)
+
+                last_price = predicted_price  # Update last price
+
         except Exception as e:
             print(f"Trading error: {e}")
-        time.sleep(60)
 
-def main():
-    global trading
-    st.title("AI Trading Bot with Yahoo Finance")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Start Trading") and not trading:
-            trading = True
-            threading.Thread(target=trading_bot, daemon=True).start()
-            st.success("Trading started!")
-    
-    with col2:
-        if st.button("Stop Trading"):
-            trading = False
-            st.warning("Trading stopped.")
-    
-    st.subheader("Real-time Prediction")
-    st.metric("Predicted Price", f"{predicted_price:.4f}")
+        time.sleep(60)  # Run every minute
+
 
 if __name__ == "__main__":
-    main()
+    trading = True
+    print("Starting Trading Bot...")
+
+    # Start Trading Thread
+    threading.Thread(target=trading_bot, daemon=True).start()
+
+    # Keep the script running
+    while trading:
+        time.sleep(60)
+
