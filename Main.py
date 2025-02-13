@@ -11,14 +11,10 @@ from hmmlearn.hmm import GaussianHMM
 import yfinance as yf
 import time
 import threading
-from google.colab import drive
 import os
 
-# Mount Google Drive
-drive.mount('/content/drive')
-
 # Define where to save the model
-MODEL_SAVE_PATH = "/content/drive/MyDrive/best_model.h5"
+MODEL_SAVE_PATH = "best_model.h5"
 best_loss = float('inf')  # Start with a high loss
 
 def train_model():
@@ -38,7 +34,7 @@ def train_model():
             model.save(MODEL_SAVE_PATH)
             print(f"New best model saved with loss: {best_loss:.4f}")
 
-#go a way
+# Suppress TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.get_logger().setLevel('ERROR')
 
@@ -268,4 +264,3 @@ if __name__ == "__main__":
     # Keep the script running
     while trading:
         time.sleep(60)
-
