@@ -12,19 +12,30 @@ import yfinance as yf
 import time
 import threading
 import os
+from google.colab import drive
+import os
 
-# Define where to save the model
-MODEL_SAVE_PATH = "best_model.h5"
+# Mount Google Drive
+drive.mount('/content/drive')
+
+# Define the folder patht
+MODEL_DIR = "/content/drive/My Drive/cryptoBot"
+
+# Ensure the directory exists
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+# Define model save path
+MODEL_SAVE_PATH = os.path.join(MODEL_DIR, "best_model.h5")
 best_loss = float('inf')  # Start with a high loss
 
 def train_model():
     global best_loss
-    
+
     features, target = prepare_training_data()
     if features is not None and target is not None:
         print("Training model...")
         history = model.fit(features, target, batch_size=1, epochs=5, verbose=1)
-        
+
         current_loss = history.history['loss'][-1]  # Get latest training loss
         print(f"Training loss: {current_loss:.4f}")
 
@@ -32,7 +43,7 @@ def train_model():
         if current_loss < best_loss:
             best_loss = current_loss
             model.save(MODEL_SAVE_PATH)
-            print(f"New best model saved with loss: {best_loss:.4f}")
+            print(f"New best model saved at {MODEL_SAVE_PATH} with loss: {best_loss:.4f}")
 
 # Suppress TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -162,9 +173,6 @@ DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1339511103482236959/r0cJ
 def calculate_probability():
     """Calculates probability based on MACD, volatility, sentiment, and HMM states."""
     global data
-
-    if data is None or len(data) < 60:
-        return 50  # Default 50% if not enough data
 
     # 1️⃣ **MACD Strength**
     macd_strength = abs(data['macd'].iloc[-1])  
