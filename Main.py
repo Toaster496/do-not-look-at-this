@@ -168,7 +168,7 @@ def prepare_training_data():
         return features_array, close_data[60:]
     return None, None
 
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1339511103482236959/r0cJaoMtY9mZiOCeLu6Rj6NUN9rHMydW0QtDG_N4qDolkNiyYpUkh4aCPONH9rm2YbmY"
+DISCORD_WEBHOOK_URL = ""
 
 def calculate_probability():
     """Calculates probability based on MACD, volatility, sentiment, and HMM states."""
